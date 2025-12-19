@@ -1,0 +1,99 @@
+[
+    {
+        "id": "a0aa9786e8818a77",
+        "type": "tab",
+        "label": "1.SQLite 初始化",
+        "disabled": false,
+        "info": "Auto-create message_queue table and index at startup"
+    },
+    {
+        "id": "d4598e4ddbbc0934",
+        "type": "inject",
+        "z": "a0aa9786e8818a77",
+        "name": "自动初始化数据库",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 0.5,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 170,
+        "y": 100,
+        "wires": [
+            [
+                "db218a83b32cbea7"
+            ]
+        ]
+    },
+    {
+        "id": "db218a83b32cbea7",
+        "type": "function",
+        "z": "a0aa9786e8818a77",
+        "name": "构建建表SQL",
+        "func": "msg.topic = `\nCREATE TABLE IF NOT EXISTS message_queue (\n    id       INTEGER PRIMARY KEY AUTOINCREMENT,\n    topic    TEXT    NOT NULL,\n    payload  TEXT    NOT NULL,\n    qos      INTEGER DEFAULT 1,\n    ts       INTEGER NOT NULL,\n    status   TEXT    NOT NULL DEFAULT 'pending',\n    retries  INTEGER DEFAULT 0,\n    sent_at  INTEGER\n);\n\nCREATE INDEX IF NOT EXISTS idx_message_queue_status ON message_queue (status, id);\n`;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 410,
+        "y": 100,
+        "wires": [
+            [
+                "942cdc9bc672af81"
+            ]
+        ]
+    },
+    {
+        "id": "942cdc9bc672af81",
+        "type": "sqlite",
+        "z": "a0aa9786e8818a77",
+        "mydb": "sqlite_db",
+        "sql": "",
+        "name": "执行初始化脚本",
+        "x": 660,
+        "y": 100,
+        "wires": [
+            [
+                "981a76db45899734"
+            ]
+        ]
+    },
+    {
+        "id": "981a76db45899734",
+        "type": "debug",
+        "z": "a0aa9786e8818a77",
+        "name": "初始化状态回显",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 890,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "sqlite_db",
+        "type": "sqlitedb",
+        "db": "${DB_PATH}",
+        "mode": "RWC"
+    },
+    {
+        "id": "14b13ef8e871d2ca",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-node-sqlite": "1.1.1"
+        }
+    }
+]
