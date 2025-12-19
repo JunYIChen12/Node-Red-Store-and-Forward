@@ -1,46 +1,131 @@
-# Node-RED SQLite 存储转发（精简版）
+# 🏭 Node-RED Edge Store & Forward (Industrial Edition)
 
-面向内存受限的边缘网关，使用 Node-RED + SQLite + MQTT 实现的轻量级存储转发流程。PLC 侧直接由边缘网关用工业协议读取（例如 Modbus 或西门子 S7），读到的数据先落盘 SQLite，网络恢复后按顺序转发到上游 MQTT，确保数据不丢失。
+**基于 Node-RED + SQLite 的工业级边缘存储转发框架（高鲁棒性版）**
 
-## 文件说明
-- `flows_store_forward.json`：可直接导入 Node-RED 的流程，包含 Modbus/S7 等工业协议采集、SQLite 入库、周期出队转发到 MQTT、发送后更新状态的全链路节点。
-- `sqlite-init.sql`：SQLite 初始化脚本，创建 `message_queue` 表及状态索引。
+这是一个面向工业现场、资源受限网关的**“断点续传”**解决方案。它解决了边缘计算中常见的网络不稳定、PLC 通讯超时、磁盘空间膨胀等痛点，确保数据在采集、缓存、转发全链路中**零丢失、有序、可追溯**。
 
-## 流程概览（精简）
-1. **工业协议采集 → 入库**：`Modbus Read / S7 Read → Normalize & buffer → sqlite` 将采集到的寄存器/变量数据以 `pending` 状态写入 SQLite。
-2. **周期出队 → 转发**：`inject → Query batch → sqlite → split → To MQTT → mqtt-out` 逐条发布到上游 MQTT，发布后 `Mark sent → sqlite` 将状态改为 `sent`。
-3. **错误捕获**：`catch → debug` 输出到调试面板，方便定位异常。
+---
 
-## 环境变量（可选）
-- `PLC_HOST`：PLC 地址（默认 `192.168.1.10`，Modbus 端口 502，S7 可替换为对应节点配置）。
-- `MQTT_HOST` / `MQTT_PORT`：MQTT 服务器地址与端口，默认 `localhost:1883`。
-- `DB_PATH`：SQLite 文件路径，默认 `/data/store-and-forward.db`。
-- `RETRY_SECONDS`：轮询待发送的周期，默认 5 秒。
-- `BATCH_LIMIT`：每轮读取的最大待发送条数，默认 10（控制内存占用）。
+## 🌟 核心特性 (v2.0 迭代更新)
 
-## 使用步骤
-1. 在目标设备安装 Node-RED，并通过 Palette 安装 `node-red-node-sqlite`，以及你所需的工业协议节点（如 `node-red-contrib-modbus` 或 `node-red-contrib-s7`）。
-2. 创建数据库文件并执行 `sqlite-init.sql`（或让 Node-RED 第一次写入时自动创建文件）。
-3. 打开 Node-RED 编辑器，导入 `flows_store_forward.json`。根据现场协议配置 Modbus/S7 读取节点（PLC IP、寄存器地址、采样周期等），并在 MQTT Broker 节点中填入实际服务器地址、凭据及 QoS=1。
-4. 部署后，流程会自动开始轮询 `pending` 数据并转发成功后标记 `sent`，断网恢复后会按顺序补发。
+相较于最初的精简版，当前版本经过深度优化，具备以下工业级特性：
 
-## Windows 环境运行指引
-> 适用于资源受限的网关或工控 PC，遵循默认的低内存批处理策略即可。
+1. **🛡️ 防御性采集 (Robust Ingestion)**
+* 内置空值/错误拦截机制，防止 Modbus/S7 通讯超时产生的无效数据污染数据库。
+* 采用 **SQL 字符串模板拼接** 技术，彻底解决 `msg` 对象元数据污染导致的 `SQLITE_CONSTRAINT` 写入报错。
 
-1. **安装 Node.js LTS**：从 <https://nodejs.org/> 下载 Windows x64 LTS 版本并安装（包含 npm）。
-2. **安装 Node-RED**：在命令行运行 `npm install -g --unsafe-perm node-red`。完成后可在终端执行 `node-red` 启动服务。
-3. **安装 SQLite 节点**：在 Node-RED Palette 中搜索并安装 `node-red-node-sqlite`。Windows 自带 SQLite DLL，无需额外编译。
-4. **初始化数据库**：
-   - 打开命令提示符，进入本仓库目录（或你希望存放数据库的路径）。
-   - 运行 `sqlite3 store-and-forward.db < sqlite-init.sql` 创建表结构；或将 `DB_PATH` 指向文件路径，让流程首次写入时自动创建。
-5. **导入流程**：在浏览器打开 <http://127.0.0.1:1880>，使用右上角菜单“导入”粘贴 `flows_store_forward.json` 内容。
-6. **配置采集与 MQTT**：双击流程中的 Modbus/S7 节点填写 PLC 连接、寄存器/变量地址、采样周期；双击 MQTT 节点填入 Broker 地址、端口、用户名/密码，确保 QoS=1，并匹配发布的主题。
-7. **运行与验证**：部署后，观察 Debug 面板，确认采集到的消息落盘到 SQLite，并在网络恢复时按批次发送。若需调整资源占用，可在环境变量或全局配置里修改 `BATCH_LIMIT`、`RETRY_SECONDS`。
 
-### 常见问题（Windows）
-- 如果启动时提示端口 1880 被占用，可在命令行设置 `set PORT=1881` 后再运行 `node-red`。
-- 若 `node-red-node-sqlite` 安装失败，确保 npm 拥有写入权限；可尝试以管理员权限重新运行命令行。
+2. **🔌 智能断网熔断 (Circuit Breaker)**
+* 引入 **MQTT 连接感知** 机制。
+* 当云端连接断开时，自动停止数据库轮询，防止系统陷入“捞取-失败-重捞”的死循环，保护网关 CPU 资源。
 
-## 资源友好性
-- 仅使用核心节点 + SQLite，查询按 `BATCH_LIMIT` 分批、`split` 逐条发送，降低内存压力。
-- 数据按 QoS 1 存储，发送成功后更新状态，不额外缓存。
+
+3. **🌏 北京时间对齐 (Timezone Alignment)**
+* 摒弃难以阅读的 Unix 毫秒戳，入库时自动转换为 **北京时间 (UTC+8)** 格式 (`YYYY-MM-DD HH:mm:ss`)。
+* 方便运维人员直接通过 DataGrip 或 SQL 工具排查故障。
+
+
+4. **🧹 自动磁盘运维 (Auto-Maintenance)**
+* 内置每日凌晨自动清理脚本，支持自定义保留天数（`RETENTION_DAYS`）。
+* 集成 `VACUUM` 指令，强制回收 SQLite 删除数据后产生的磁盘碎片，防止存储空间无限膨胀。
+
+
+
+---
+
+## 📂 文件说明
+
+* `flows_store_forward.json`: 核心 Node-RED 流程文件（直接导入即可使用）。
+* `sqlite-init.sql`: 数据库初始化脚本（流程首次运行时亦可自动建表）。
+* `TROUBLESHOOTING.md`: **[强烈推荐]** 详细记录了开发过程中的踩坑经验与故障复盘（包含 Modbus 报错、死循环、时区问题的深度解析）。
+
+---
+
+## 🔄 流程逻辑概览
+
+### 1. 入库链路 (Ingestion)
+
+> **Modbus/S7 Read** ➔ **清洗与格式化** ➔ **SQLite Insert**
+
+* **清洗**：拦截通讯超时的空 Payload。
+* **格式化**：生成北京时间戳，将数据包封装为 JSON 字符串。
+* **存储**：以 `status='pending'` 状态写入 `message_queue` 表。
+
+### 2. 出库链路 (Forwarding)
+
+> **MQTT 状态监听** ➔ **断路器判断** ➔ **批量查询** ➔ **逐条发送** ➔ **状态更新**
+
+* **断路器**：若 MQTT 未连接，流程直接终止，不查询数据库。
+* **发送**：连接正常时，按 `id ASC` 顺序取出旧数据推送到云端。
+* **确认**：发送成功后，立即执行 `UPDATE` 将状态改为 `sent`。
+
+### 3. 运维链路 (Maintenance)
+
+> **Cron 触发** ➔ **过期删除** ➔ **VACUUM 压缩**
+
+* 每天凌晨 02:00 删除 `N` 天前的 `sent` 数据，并释放磁盘空间。
+
+---
+
+## ⚙️ 环境配置 (Environment)
+
+| 变量名 | 默认值 | 说明 |
+| --- | --- | --- |
+| `DB_PATH` | `/data/store.db` | SQLite 数据库文件路径 |
+| `MQTT_HOST` | `localhost` | MQTT Broker 地址 |
+| `MQTT_PORT` | `1883` | MQTT Broker 端口 |
+| `RETENTION_DAYS` | `7` | **[新增]** 历史数据保留天数，超过此时限的已发送数据将被自动清理 |
+| `BATCH_LIMIT` | `10` | 单次轮询的最大条数（控制内存水位） |
+
+---
+
+## 🚀 快速开始
+
+### 1. 依赖安装
+
+在 Node-RED 的 Palette 中安装以下核心节点：
+
+* `node-red-node-sqlite` (数据库驱动)
+* `node-red-contrib-modbus` (或你需要的 S7/OPC-UA 插件)
+
+### 2. 导入流程
+
+1. 下载本仓库的 `flows_store_forward.json`。
+2. 在 Node-RED 右上角菜单选择 **导入 (Import)** -> **粘贴内容**。
+
+### 3. 关键配置检查 (必做!)
+
+* **配置数据库**：双击 SQLite 节点，设置你的 `.db` 文件存储路径。
+* **配置 MQTT**：在 `发送到云端` 节点中配置你的 Broker 地址。
+* **关联状态监听 (重要)**：
+* 找到流程中的 **“监听 MQTT 状态”** (Status) 节点。
+* 双击它，确保在 **Target (目标)** 中勾选了 **“发送到云端”** 节点。
+* *注：导入流程时 ID 可能会变，若未关联会导致熔断机制失效。*
+
+
+
+### 4. 部署运行
+
+点击 **Deploy**。观察 Debug 窗口：
+
+* ✅ **入库成功**：显示 PLC 采集到的数据。
+* ✅ **网络正常**：显示“正在轮询”，数据会被转发。
+* 🚫 **断网测试**：断开 MQTT 连接，Debug 应提示“MQTT断开，暂停补发”，且停止数据库查询（无死循环刷屏）。
+
+---
+
+## 📚 常见问题 (FAQ)
+
+### Q1: 为什么删除了数据，.db 文件大小没变？
+
+**A**: 这是 SQLite 的特性。删除数据仅标记空间为“空闲”。本项目已在清理脚本中集成了 `VACUUM` 命令，每天凌晨会自动压缩并释放空间。
+
+### Q2: 为什么 ID 不是从 1 开始的？
+
+**A**: `AUTOINCREMENT` 机制为了保证数据唯一性，不会回溯 ID。这是工业系统的标准设计，请勿强制重置，以免日志溯源冲突。
+
+### Q3: 遇到 Modbus 超时报错 `SQLITE_CONSTRAINT` 怎么办？
+
+**A**: 请检查你是否使用了最新版的流程代码。新版已在入库前增加了空值拦截逻辑 `if (!msg.payload) return null;`。
+
+> 更多深度技术细节，请阅读仓库内的 [TROUBLESHOOTING.md](https://www.google.com/search?q=./TROUBLESHOOTING.md)。
