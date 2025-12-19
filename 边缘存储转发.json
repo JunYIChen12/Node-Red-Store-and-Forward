@@ -1,0 +1,470 @@
+[
+    {
+        "id": "00ed9b2795036d55",
+        "type": "tab",
+        "label": "2.边缘存储转发 (完美闭环版)",
+        "disabled": false,
+        "info": "集成北京时间、断网熔断、自动清理与数据清洗功能"
+    },
+    {
+        "id": "8c797d5152ac6de5",
+        "type": "modbus-read",
+        "z": "00ed9b2795036d55",
+        "name": "PLC Modbus Read",
+        "topic": "plc/sensor1",
+        "showStatusActivities": false,
+        "logIOActivities": false,
+        "showErrors": false,
+        "showWarnings": true,
+        "unitid": "1",
+        "dataType": "HoldingRegister",
+        "adr": "0",
+        "quantity": "2",
+        "rate": "1000",
+        "rateUnit": "ms",
+        "delayOnStart": false,
+        "enableDeformedMessages": false,
+        "startDelayTime": "",
+        "server": "cccefd567046c85c",
+        "useIOFile": false,
+        "ioFile": "",
+        "useIOForPayload": false,
+        "emptyMsgOnFail": true,
+        "x": 150,
+        "y": 120,
+        "wires": [
+            [
+                "c39071a5568ff0eb"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "c39071a5568ff0eb",
+        "type": "function",
+        "z": "00ed9b2795036d55",
+        "name": "① 清洗 & 组装 (北京时间)",
+        "func": "// --- 1. 防御性拦截 ---\nif (msg.payload === \"\" || msg.payload == null || msg.error) {\n    return null;\n}\n\n// --- 2. 数据准备 ---\nconst payloadStr = typeof msg.payload === 'string' ? msg.payload : JSON.stringify(msg.payload);\nconst qos = msg.qos || 1;\nconst topicStr = msg.topic || 'plc/default';\n\n// --- 3. 生成北京时间 (YYYY-MM-DD HH:mm:ss) ---\nconst d = new Date();\n// UTC时间 + 8小时偏移量\nconst beijingMs = d.getTime() + (8 * 60 * 60 * 1000);\nconst beijingDate = new Date(beijingMs);\n// 转ISO并去掉T和Z，截取前19位: \"2025-12-19 14:30:00\"\nconst now = beijingDate.toISOString().replace('T', ' ').substring(0, 19);\n\n// --- 4. 拼接 SQL ---\n// 注意：ts 字段现在是字符串，必须加单引号 '${now}'\nmsg.topic = `INSERT INTO message_queue (topic, payload, qos, ts, status, retries) \n             VALUES ('${topicStr}', '${payloadStr}', ${qos}, '${now}', 'pending', 0)`;\n\n// --- 5. 清理干扰项 ---\ndelete msg.params;\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 400,
+        "y": 120,
+        "wires": [
+            [
+                "bbf99fe46aa56ac3"
+            ]
+        ]
+    },
+    {
+        "id": "bbf99fe46aa56ac3",
+        "type": "sqlite",
+        "z": "00ed9b2795036d55",
+        "mydb": "sqlite_db",
+        "name": "入库 (Insert)",
+        "x": 630,
+        "y": 120,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "e14722bd4781ae8a",
+        "type": "inject",
+        "z": "00ed9b2795036d55",
+        "name": "轮询触发器",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "5",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 2,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 140,
+        "y": 280,
+        "wires": [
+            [
+                "7d96c48ab5f69257"
+            ]
+        ]
+    },
+    {
+        "id": "7d96c48ab5f69257",
+        "type": "function",
+        "z": "00ed9b2795036d55",
+        "name": "② 构建查询 (含断网熔断)",
+        "func": "// --- 1. 断网熔断机制 ---\nconst isConnected = flow.get('mqttConnected');\n\nif (isConnected !== true) {\n    node.status({fill:\"red\", shape:\"ring\", text:\"等待MQTT连接...\"});\n    return null;\n}\n\nnode.status({fill:\"green\", shape:\"dot\", text:\"正在轮询\"});\n\n// --- 2. 构建查询 ---\nconst limit = 10;\n// 按ID顺序取出未发送的数据\nmsg.topic = `SELECT id, topic, payload, qos, ts FROM message_queue WHERE status='pending' ORDER BY id ASC LIMIT ${limit}`;\nmsg.params = [];\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 390,
+        "y": 280,
+        "wires": [
+            [
+                "fa931c4788788459"
+            ]
+        ]
+    },
+    {
+        "id": "fa931c4788788459",
+        "type": "sqlite",
+        "z": "00ed9b2795036d55",
+        "mydb": "sqlite_db",
+        "name": "加载 Pending 数据",
+        "x": 630,
+        "y": 280,
+        "wires": [
+            [
+                "41fe26edd9d1d06c"
+            ]
+        ]
+    },
+    {
+        "id": "41fe26edd9d1d06c",
+        "type": "split",
+        "z": "00ed9b2795036d55",
+        "name": "拆分消息",
+        "splt": "\\n",
+        "spltType": "str",
+        "arraySplt": 1,
+        "stream": false,
+        "addname": "",
+        "x": 820,
+        "y": 280,
+        "wires": [
+            [
+                "e9c49a41cc30163d"
+            ]
+        ]
+    },
+    {
+        "id": "e9c49a41cc30163d",
+        "type": "function",
+        "z": "00ed9b2795036d55",
+        "name": "格式化发送 (带时间戳)",
+        "func": "if (!msg.payload) { return null; }\n\nconst row = msg.payload;\n// 保留 row.id 以便后续更新状态\nmsg.queueId = row.id;\n\n// 恢复 MQTT Topic\nmsg.topic = row.topic;\n\n// 解析原始数值\nlet rawValue;\ntry {\n    rawValue = JSON.parse(row.payload);\n} catch (err) {\n    rawValue = row.payload;\n}\n\n// --- 构建最终 JSON 包 ---\n// 包含原始值和数据库里存储的北京时间\nmsg.payload = {\n    value: rawValue,\n    ts: row.ts \n};\n\nmsg.qos = row.qos || 1;\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1020,
+        "y": 280,
+        "wires": [
+            [
+                "51b7d044f2a46b0e",
+                "3877f1d4e49b0a53"
+            ]
+        ]
+    },
+    {
+        "id": "51b7d044f2a46b0e",
+        "type": "mqtt out",
+        "z": "00ed9b2795036d55",
+        "name": "发送到云端",
+        "topic": "",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "mqtt_broker",
+        "x": 1250,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "3877f1d4e49b0a53",
+        "type": "function",
+        "z": "00ed9b2795036d55",
+        "name": "更新状态SQL",
+        "func": "if (!msg.queueId) { return null; }\n\n// 使用当前时间戳记录发送时间 (这里可以用毫秒戳，也可以用北京时间，看你需求，这里用毫秒戳方便计算耗时)\nconst now = Date.now();\nconst id = msg.queueId;\n\n// 直接拼接 SQL 更新状态\nmsg.topic = `UPDATE message_queue SET status='sent', sent_at = ${now} WHERE id = ${id}`;\n\n// 清理无关字段\ndelete msg.params;\ndelete msg.payload;\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1250,
+        "y": 320,
+        "wires": [
+            [
+                "a359793259bd7961"
+            ]
+        ]
+    },
+    {
+        "id": "a359793259bd7961",
+        "type": "sqlite",
+        "z": "00ed9b2795036d55",
+        "mydb": "sqlite_db",
+        "name": "标记为 Sent",
+        "x": 1450,
+        "y": 320,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "7d18c07b078fdf53",
+        "type": "status",
+        "z": "00ed9b2795036d55",
+        "name": "监听 MQTT 状态",
+        "scope": [
+            "51b7d044f2a46b0e"
+        ],
+        "x": 1080,
+        "y": 180,
+        "wires": [
+            [
+                "4473d35b9dbb733d"
+            ]
+        ]
+    },
+    {
+        "id": "4473d35b9dbb733d",
+        "type": "function",
+        "z": "00ed9b2795036d55",
+        "name": "更新连接标记",
+        "func": "// 防止报错\nif (!msg.status) { return null; }\n\n// 通过颜色判断连接状态 (绿色=已连接)\nconst isConnected = (msg.status.fill === \"green\");\n\n// 设置全局标记\nflow.set('mqttConnected', isConnected);\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1280,
+        "y": 180,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "2ef1b3924f733c11",
+        "type": "catch",
+        "z": "00ed9b2795036d55",
+        "name": "全局异常捕获",
+        "scope": null,
+        "uncaught": false,
+        "x": 150,
+        "y": 580,
+        "wires": [
+            [
+                "88bb2d56ed2f0821"
+            ]
+        ]
+    },
+    {
+        "id": "88bb2d56ed2f0821",
+        "type": "debug",
+        "z": "00ed9b2795036d55",
+        "name": "错误日志",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 340,
+        "y": 580,
+        "wires": []
+    },
+    {
+        "id": "node_maint_inject",
+        "type": "inject",
+        "z": "00ed9b2795036d55",
+        "name": "每天凌晨2点维护",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "00 02 * * *",
+        "once": true,
+        "onceDelay": "10",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 130,
+        "y": 520,
+        "wires": [
+            [
+                "node_calc_delete"
+            ]
+        ]
+    },
+    {
+        "id": "node_calc_delete",
+        "type": "function",
+        "z": "00ed9b2795036d55",
+        "name": "1. 构建删除命令",
+        "func": "const retentionDays = parseInt(env.get('RETENTION_DAYS') || 7);\n\n// 删除过期数据\nmsg.topic = `DELETE FROM message_queue WHERE status='sent' AND ts < datetime('now', '+8 hours', '-${retentionDays} days')`;\n\nnode.warn(`[维护] 正在删除 ${retentionDays} 天前的旧数据...`);\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 350,
+        "y": 520,
+        "wires": [
+            [
+                "node_exec_delete"
+            ]
+        ]
+    },
+    {
+        "id": "node_exec_delete",
+        "type": "sqlite",
+        "z": "00ed9b2795036d55",
+        "mydb": "sqlite_db",
+        "name": "执行删除",
+        "x": 550,
+        "y": 520,
+        "wires": [
+            [
+                "node_trigger_vacuum"
+            ]
+        ]
+    },
+    {
+        "id": "node_trigger_vacuum",
+        "type": "function",
+        "z": "00ed9b2795036d55",
+        "name": "2. 构建压缩命令",
+        "func": "// 删除操作完成后，发送 VACUUM 命令来释放磁盘空间\nmsg.topic = \"VACUUM;\";\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 750,
+        "y": 520,
+        "wires": [
+            [
+                "node_exec_vacuum"
+            ]
+        ]
+    },
+    {
+        "id": "node_exec_vacuum",
+        "type": "sqlite",
+        "z": "00ed9b2795036d55",
+        "mydb": "sqlite_db",
+        "name": "执行压缩 (VACUUM)",
+        "x": 960,
+        "y": 520,
+        "wires": [
+            [
+                "node_maint_log"
+            ]
+        ]
+    },
+    {
+        "id": "node_maint_log",
+        "type": "debug",
+        "z": "00ed9b2795036d55",
+        "name": "维护完成",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1150,
+        "y": 520,
+        "wires": []
+    },
+    {
+        "id": "cccefd567046c85c",
+        "type": "modbus-client",
+        "name": "Modbus-TCP-Simulator",
+        "clienttype": "tcp",
+        "bufferCommands": true,
+        "stateLogEnabled": false,
+        "queueLogEnabled": false,
+        "failureLogEnabled": false,
+        "tcpHost": "127.0.0.1",
+        "tcpPort": "502",
+        "tcpType": "DEFAULT",
+        "serialPort": "/dev/ttyUSB",
+        "serialType": "RTU-BUFFERD",
+        "serialBaudrate": "9600",
+        "serialDatabits": "8",
+        "serialStopbits": "1",
+        "serialParity": "none",
+        "serialConnectionDelay": "100",
+        "serialAsciiResponseStartDelimiter": "",
+        "unit_id": 1,
+        "commandDelay": 1,
+        "clientTimeout": 1000,
+        "reconnectOnTimeout": true,
+        "reconnectTimeout": 2000,
+        "parallelUnitIdsAllowed": true,
+        "showErrors": false,
+        "showWarnings": true,
+        "showLogs": true
+    },
+    {
+        "id": "sqlite_db",
+        "type": "sqlitedb",
+        "db": "${DB_PATH}",
+        "mode": "RWC"
+    },
+    {
+        "id": "mqtt_broker",
+        "type": "mqtt-broker",
+        "name": "Edge MQTT",
+        "broker": "${MQTT_HOST}",
+        "port": "1883",
+        "clientid": "store-forward",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "2f38e39cbc567652",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-contrib-modbus": "5.44.1",
+            "node-red-node-sqlite": "1.1.1"
+        }
+    }
+]
