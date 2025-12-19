@@ -24,6 +24,23 @@
 3. 打开 Node-RED 编辑器，导入 `flows_store_forward.json`。在 MQTT Broker 节点中填入实际服务器地址、凭据及 QoS=1。
 4. 部署后，流程会自动开始轮询 `pending` 数据并转发成功后标记 `sent`，断网恢复后会按顺序补发。
 
+## Windows 环境运行指引
+> 适用于资源受限的网关或工控 PC，遵循默认的低内存批处理策略即可。
+
+1. **安装 Node.js LTS**：从 <https://nodejs.org/> 下载 Windows x64 LTS 版本并安装（包含 npm）。
+2. **安装 Node-RED**：在命令行运行 `npm install -g --unsafe-perm node-red`。完成后可在终端执行 `node-red` 启动服务。
+3. **安装 SQLite 节点**：在 Node-RED Palette 中搜索并安装 `node-red-node-sqlite`。Windows 自带 SQLite DLL，无需额外编译。
+4. **初始化数据库**：
+   - 打开命令提示符，进入本仓库目录（或你希望存放数据库的路径）。
+   - 运行 `sqlite3 store-and-forward.db < sqlite-init.sql` 创建表结构；或将 `DB_PATH` 指向文件路径，让流程首次写入时自动创建。
+5. **导入流程**：在浏览器打开 <http://127.0.0.1:1880>，使用右上角菜单“导入”粘贴 `flows_store_forward.json` 内容。
+6. **配置 MQTT**：双击流程中的 MQTT 节点，填入你的 Broker 地址、端口、用户名/密码，确保 QoS=1，并匹配订阅/发布的主题。
+7. **运行与验证**：部署后，观察 Debug 面板，确认收到的消息落盘到 SQLite，并在网络恢复时按批次发送。若需调整资源占用，可在环境变量或全局配置里修改 `BATCH_LIMIT`、`RETRY_SECONDS`。
+
+### 常见问题（Windows）
+- 如果启动时提示端口 1880 被占用，可在命令行设置 `set PORT=1881` 后再运行 `node-red`。
+- 若 `node-red-node-sqlite` 安装失败，确保 npm 拥有写入权限；可尝试以管理员权限重新运行命令行。
+
 ## 资源友好性
 - 仅使用核心节点 + SQLite，查询按 `BATCH_LIMIT` 分批、`split` 逐条发送，降低内存压力。
 - 数据按 QoS 1 存储，发送成功后更新状态，不额外缓存。
