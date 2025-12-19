@@ -57,22 +57,3 @@ delete msg.params;
 化繁为简：当 Node-RED 消息对象 (msg) 变得过于复杂时，msg.params 这种依赖对象解析的传参方式容易在高并发或复杂元数据环境下失效。
 
 确定性指令：在工业边缘场景下，“暴力拼接 SQL 字符串” 虽然看起来不够“优雅”，但它提供了最高的确定性和稳定性，是解决数据库写入异常的最直接手段。
-
-B. 放弃参数绑定，改用字符串拼接
-为了规避臃肿消息对象对 msg.params 的干扰，我们将 SQL 语句改为直接拼接模式。
-
-JavaScript
-
-// 核心改动：使用模板字符串直接将变量拼入 SQL
-msg.topic = `INSERT INTO message_queue (topic, payload, qos, ts, status, retries) 
-             VALUES ('${topicStr}', '${payloadStr}', ${qos}, '${now}', 'pending', 0)`;
-
-// 彻底删除可能干扰 SQLite 节点的 params 对象
-delete msg.params;
-
-4. 经验总结 (Lessons Learned)
-边缘侧的防御性编程：在处理硬件采集数据时，永远不要假设上游节点总是输出有效数据。必须在入库前进行有效性校验。
-
-化繁为简：当 Node-RED 消息对象 (msg) 变得过于复杂时，msg.params 这种依赖对象解析的传参方式容易在高并发或复杂元数据环境下失效。
-
-确定性指令：在工业边缘场景下，“暴力拼接 SQL 字符串” 虽然看起来不够“优雅”，但它提供了最高的确定性和稳定性，是解决数据库写入异常的最直接手段。
